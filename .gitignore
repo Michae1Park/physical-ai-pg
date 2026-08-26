@@ -1,3 +1,7 @@
+# Local eval run artifacts (openvla/LIBERO source itself is vendored, tracked in git)
+src/openvla/rollouts/
+src/openvla/experiments/logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
