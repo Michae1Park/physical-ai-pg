@@ -5,22 +5,47 @@ import os
 
 import imageio
 import numpy as np
-import tensorflow as tf
-from libero.libero import get_libero_path
-from libero.libero.envs import OffScreenRenderEnv
 
-from experiments.robot.robot_utils import (
+# This is the first place TensorFlow gets imported in the eval script's import chain (before
+# experiments.robot.openvla_utils, which has its own copy of this guard) -- see the comment there
+# for why blanking CUDA_VISIBLE_DEVICES around the import is necessary. Without it, TF's GPU probe
+# races with MuJoCo/robosuite's GL context setup and segfaults, most reliably when has_renderer=True
+# (get_libero_env's render_live path) drags in an on-screen GLX/OpenCVRenderer context too.
+_real_cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+import tensorflow as tf  # noqa: E402
+
+if _real_cuda_visible_devices is None:
+    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = _real_cuda_visible_devices
+
+from libero.libero import get_libero_path  # noqa: E402
+from libero.libero.envs import OffScreenRenderEnv  # noqa: E402
+from libero.libero.envs.env_wrapper import ControlEnv  # noqa: E402
+
+from experiments.robot.robot_utils import (  # noqa: E402
     DATE,
     DATE_TIME,
 )
 
 
-def get_libero_env(task, model_family, resolution=256):
+def get_libero_env(task, model_family, resolution=256, render_live=False):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
-    env = OffScreenRenderEnv(**env_args)
+    if render_live:
+        # robosuite's on-screen viewer (OpenCVRenderer) just cv2.imshow()'s frames pulled from the
+        # *offscreen* render context, so has_offscreen_renderer must stay True even here. That shared
+        # context has to go through the real display's GLX driver, same as the cv2 window -- if
+        # MUJOCO_GL=egl is set (as we do for the fast headless-only path), the offscreen context binds
+        # to the headless EGL device instead and the process segfaults the moment cv2 tries to show a
+        # frame. So: run with MUJOCO_GL unset (or "glx") and a working $DISPLAY when render_live=True.
+        env = ControlEnv(has_renderer=True, render_camera="frontview", **env_args)
+    else:
+        env = OffScreenRenderEnv(**env_args)
     env.seed(0)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
     return env, task_description
 

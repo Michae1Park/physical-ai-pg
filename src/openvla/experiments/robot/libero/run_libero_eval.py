@@ -71,6 +71,10 @@ class GenerateConfig:
     task_suite_name: str = "libero_spatial"          # Task suite. Options: libero_spatial, libero_object, libero_goal, libero_10, libero_90
     num_steps_wait: int = 10                         # Number of steps to wait for objects to stabilize in sim
     num_trials_per_task: int = 50                    # Number of rollouts per task
+    render_live: bool = False                        # Pop up a live on-screen view of the rollout, in addition to
+                                                       # saving the MP4. Requires a real $DISPLAY and MUJOCO_GL left
+                                                       # at its GLX default -- do NOT set MUJOCO_GL=egl when this is on,
+                                                       # it will segfault (see get_libero_env in libero_utils.py)
 
     #################################################################################################################
     # Utils
@@ -153,7 +157,7 @@ def eval_libero(cfg: GenerateConfig) -> None:
         initial_states = task_suite.get_task_init_states(task_id)
 
         # Initialize LIBERO environment and task description
-        env, task_description = get_libero_env(task, cfg.model_family, resolution=256)
+        env, task_description = get_libero_env(task, cfg.model_family, resolution=256, render_live=cfg.render_live)
 
         # Start episodes
         task_episodes, task_successes = 0, 0
@@ -189,6 +193,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
                     # and we need to wait for them to fall
                     if t < cfg.num_steps_wait:
                         obs, reward, done, info = env.step(get_libero_dummy_action(cfg.model_family))
+                        if cfg.render_live:
+                            env.render()
                         t += 1
                         continue
 
@@ -226,6 +232,8 @@ def eval_libero(cfg: GenerateConfig) -> None:
 
                     # Execute action in environment
                     obs, reward, done, info = env.step(action.tolist())
+                    if cfg.render_live:
+                        env.render()
                     if done:
                         task_successes += 1
                         total_successes += 1

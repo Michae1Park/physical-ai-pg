@@ -87,6 +87,9 @@ class ControlEnv:
     def step(self, action):
         return self.env.step(action)
 
+    def render(self):
+        return self.env.render()
+
     def reset(self):
         success = False
         while not success:
