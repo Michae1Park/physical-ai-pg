@@ -40,7 +40,7 @@ headless/GPU-accelerated instead of requiring a display:
 conda activate openvla
 cd src/openvla
 
-MUJOCO_GL=egl python experiments/robot/libero/run_libero_eval.py \
+MUJOCO_GL=egl MUJOCO_EGL_DEVICE_ID=0 python experiments/robot/libero/run_libero_eval.py \
   --model_family openvla \
   --pretrained_checkpoint openvla/openvla-7b-finetuned-libero-spatial \
   --task_suite_name libero_spatial \

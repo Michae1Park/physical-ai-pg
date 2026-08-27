@@ -276,6 +276,11 @@ def eval_libero(cfg: GenerateConfig) -> None:
                 }
             )
 
+        # Release this task's MuJoCo/EGL context before the next task builds a new one -- otherwise
+        # they only get cleaned up whenever the GC gets around to it, and MuJoCo's EGL context
+        # destructor is unreliable on this box, so contexts can pile up over a long task-suite run.
+        env.close()
+
     # Save local log file
     log_file.close()
 
