@@ -5,20 +5,31 @@ import os
 import time
 
 import numpy as np
-import tensorflow as tf
 
-# Prevent TensorFlow from grabbing the GPU / an EGL context here: it's only used for RLDS
-# dataset utilities in this codebase, and letting it touch the GPU conflicts with MuJoCo's
-# EGL-based offscreen rendering (observed as a segfault during LIBERO env creation).
-tf.config.set_visible_devices([], "GPU")
+# Prevent TensorFlow from touching CUDA at all here: it's only used for RLDS dataset
+# utilities in this codebase, but even `tf.config.set_visible_devices([], "GPU")` still
+# has to enumerate/probe the GPU first before hiding it, and that probe segfaults
+# intermittently on this box. Blanking CUDA_VISIBLE_DEVICES hides the GPU from TF for the
+# *whole* import chain below (import tensorflow, plus tensorflow_datasets/dlimp getting
+# pulled in transitively via prismatic — that's the actual trigger for TF's GPU probe,
+# not the `import tensorflow` line itself). Restore it right before the first real
+# PyTorch CUDA touch (torch.cuda.is_available() below) so PyTorch/MuJoCo are unaffected.
+_real_cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
-import torch
+import tensorflow as tf  # noqa: E402
+import torch  # noqa: E402
 from PIL import Image
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
 
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
+
+if _real_cuda_visible_devices is None:
+    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = _real_cuda_visible_devices
 
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
