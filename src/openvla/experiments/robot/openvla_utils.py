@@ -10,14 +10,24 @@ import numpy as np
 # utilities in this codebase, but even `tf.config.set_visible_devices([], "GPU")` still
 # has to enumerate/probe the GPU first before hiding it, and that probe segfaults
 # intermittently on this box. Blanking CUDA_VISIBLE_DEVICES hides the GPU from TF for the
-# *whole* import chain below (import tensorflow, plus tensorflow_datasets/dlimp getting
-# pulled in transitively via prismatic — that's the actual trigger for TF's GPU probe,
-# not the `import tensorflow` line itself). Restore it right before the first real
-# PyTorch CUDA touch (torch.cuda.is_available() below) so PyTorch/MuJoCo are unaffected.
+# `import tensorflow` line. IMPORTANT: restore it immediately after that import, before
+# importing torch/transformers/prismatic below -- something in the prismatic HF extension
+# import chain calls a CUDA-availability check that gets permanently cached if it runs
+# while CUDA_VISIBLE_DEVICES is blanked, so torch.cuda.is_available() returns False for
+# the rest of the process even after the env var is restored, silently falling back to
+# CPU with no error (confirmed: importing transformers+prismatic with the *real*
+# CUDA_VISIBLE_DEVICES value is fine, no TF-GPU-probe segfault -- the wide-blanking window
+# was never actually needed past the `import tensorflow` line itself).
 _real_cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 
 import tensorflow as tf  # noqa: E402
+
+if _real_cuda_visible_devices is None:
+    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+else:
+    os.environ["CUDA_VISIBLE_DEVICES"] = _real_cuda_visible_devices
+
 import torch  # noqa: E402
 from PIL import Image
 from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq, AutoProcessor
@@ -25,11 +35,6 @@ from transformers import AutoConfig, AutoImageProcessor, AutoModelForVision2Seq,
 from prismatic.extern.hf.configuration_prismatic import OpenVLAConfig
 from prismatic.extern.hf.modeling_prismatic import OpenVLAForActionPrediction
 from prismatic.extern.hf.processing_prismatic import PrismaticImageProcessor, PrismaticProcessor
-
-if _real_cuda_visible_devices is None:
-    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
-else:
-    os.environ["CUDA_VISIBLE_DEVICES"] = _real_cuda_visible_devices
 
 # Initialize important constants and pretty-printing mode in NumPy.
 ACTION_DIM = 7
@@ -72,6 +77,14 @@ def get_vla(cfg):
     #       already be set to the right devices and casted to the correct dtype upon loading.
     if not cfg.load_in_8bit and not cfg.load_in_4bit:
         vla = vla.to(DEVICE)
+        if DEVICE.type != "cuda":
+            raise RuntimeError(
+                f"Expected to load the VLA on a CUDA device, but DEVICE={DEVICE}. "
+                "torch.cuda.is_available() returned False -- if a GPU is actually present, this "
+                "is likely the CUDA_VISIBLE_DEVICES-blanking-during-import bug documented at the "
+                "top of this file (torch.cuda.is_available() gets permanently cached as False if "
+                "the transformers/prismatic imports ran while CUDA_VISIBLE_DEVICES was blanked)."
+            )
 
     # Load dataset stats used during finetuning (for action un-normalization).
     dataset_statistics_path = os.path.join(cfg.pretrained_checkpoint, "dataset_statistics.json")
