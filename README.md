@@ -4,6 +4,8 @@ Running [OpenVLA](https://github.com/openvla/openvla) against the [LIBERO](https
 
 Rendering runs headlessly via MuJoCo's EGL backend (GPU-accelerated, no display needed) — rollouts are saved as MP4 files rather than shown in an on-screen viewer, which is the practical option on a remote/SSH'd-into GPU box.
 
+`src/openvla` and `src/LIBERO` are vendored directly in this repo (neither is an actively maintained PyPI package, and OpenVLA's LIBERO eval script only exists as source, not as an installable module) — cloning this repo is all you need to get the code. What's left is building the Python environment.
+
 ## Prerequisites
 
 - NVIDIA GPU + driver (tested on an L40S, CUDA 12.1 toolchain via PyTorch's own wheels — no system CUDA toolkit required)
@@ -14,98 +16,19 @@ Rendering runs headlessly via MuJoCo's EGL backend (GPU-accelerated, no display 
 ## Installation
 
 ```bash
-# 1. Create the env
-conda create -n openvla python=3.10 -y
-conda activate openvla
-
-# 2. Downgrade pip — pip >= 24 has a resolver bug that crashes when resolving
-#    some of the older pinned packages below (tensorflow==2.15, old wandb).
-pip install "pip==23.3.2"
-
-# 3. PyTorch (match to your CUDA; this matches driver CUDA 12.x/13.x via forward compat)
-pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 \
-  --index-url https://download.pytorch.org/whl/cu121
-
-# 4. Clone and install OpenVLA
-mkdir -p src && cd src
-git clone https://github.com/openvla/openvla.git
-cd openvla
-pip install -e .
-cd ../..
-
-# 5. Clone LIBERO
-cd src
-git clone https://github.com/Lifelong-Robot-Learning/LIBERO.git
-cd LIBERO
-pip install -e .          # this "succeeds" but produces a broken editable install — see step 6
-cd ../..
-
-# 6. Fix LIBERO's editable install
-# LIBERO's package layout is LIBERO/libero/libero/ (an implicit namespace package `libero`
-# wrapping the real package `libero.libero`). setuptools' modern editable-install finder
-# can't resolve that layout, so `import libero` fails outside the LIBERO directory. Work
-# around it with a plain .pth file pointing at the repo root instead:
-SITE=$(python -c "import site; print(site.getsitepackages()[0])")
-echo "$(pwd)/src/LIBERO" > "$SITE/zz_libero_root.pth"
-
-# 7. Install LIBERO's extra runtime deps
-cd src/openvla
-pip install -r experiments/robot/libero/libero_requirements.txt
-pip install "numpy<2"
-cd ../..
-
-# 8. Pin mujoco — robosuite==1.4.1 (pulled in by LIBERO) declares mujoco>=2.3.0 with no
-# upper bound, so pip installs the latest by default. Anything >=3.x segfaults/asserts
-# (`get_joint_qpos_addr` AssertionError) when robosuite creates an environment.
-pip install "mujoco==2.3.7"
-
-# 9. Fix the protobuf / tensorflow-metadata / wandb version chain
-# tensorflow==2.15.0 needs an older protobuf than the default tensorflow-metadata pulls in.
-pip install "tensorflow-metadata==1.14.0"
-# That downgrades protobuf to 3.20.3, which breaks a modern `wandb`. Pin an old wandb instead
-# (only used for optional logging; --no-deps avoids re-triggering the pip resolver bug):
-pip install "wandb==0.16.6" --no-deps
-pip install appdirs sentry-sdk docker-pycreds setproctitle GitPython
+bash scripts/setup_env.sh
 ```
 
-Two small source patches are also required in `src/openvla/experiments/robot/openvla_utils.py`:
+Creates the `openvla` conda env (Python 3.10) and installs everything: PyTorch, OpenVLA,
+LIBERO, and a chain of version pins needed to make robosuite/MuJoCo/TensorFlow coexist
+without segfaulting. The two required patches to OpenVLA's eval code (skip flash-attn,
+stop TensorFlow from touching the GPU) are already applied in the vendored `src/openvla`.
+See the comments in `scripts/setup_env.sh` for the why on each step. Safe to re-run.
 
-1. **Skip flash-attn** (avoids needing a system CUDA toolkit / `nvcc` to compile it — fine for
-   a quick eval, no measurable quality loss):
-   ```python
-   # attn_implementation="flash_attention_2",
-   attn_implementation="sdpa",
-   ```
-
-2. **Stop TensorFlow from touching the GPU.** TensorFlow is only used for the RLDS data-loading
-   utilities (unused at eval time), but importing it unconditionally grabs a CUDA/EGL context
-   that collides with MuJoCo's own EGL context and segfaults the process the moment an
-   environment is created. Add this right after `import tensorflow as tf`:
-   ```python
-   import tensorflow as tf
-   tf.config.set_visible_devices([], "GPU")
-   ```
-
-Finally, pre-seed LIBERO's one-time interactive config prompt so it doesn't block a
-non-interactive run:
-
-```bash
-python -c "
-import os, yaml
-libero_root = 'src/LIBERO/libero/libero'
-cfg_dir = os.path.expanduser('~/.libero')
-os.makedirs(cfg_dir, exist_ok=True)
-cfg = {
-  'benchmark_root': libero_root,
-  'bddl_files': os.path.join(libero_root, 'bddl_files'),
-  'init_states': os.path.join(libero_root, 'init_files'),
-  'datasets': os.path.join(libero_root, '../datasets'),
-  'assets': os.path.join(libero_root, 'assets'),
-}
-with open(os.path.join(cfg_dir, 'config.yaml'), 'w') as f:
-    yaml.dump(cfg, f)
-"
-```
+This machine shows intermittent crashes unrelated to this setup — seen in pip installs,
+MuJoCo's model compiler, and even plain CPython stdlib, which points to a hardware/memory
+reliability issue rather than anything fixable here. If something crashes with no clear
+cause, just retry; it has consistently succeeded on the next attempt.
 
 ## Quick Start
 
