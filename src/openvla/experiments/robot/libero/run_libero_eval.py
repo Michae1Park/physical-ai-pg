@@ -157,7 +157,14 @@ def eval_libero(cfg: GenerateConfig) -> None:
         initial_states = task_suite.get_task_init_states(task_id)
 
         # Initialize LIBERO environment and task description
-        env, task_description = get_libero_env(task, cfg.model_family, resolution=256, render_live=cfg.render_live)
+        env, task_description = get_libero_env(
+            task,
+            cfg.model_family,
+            resolution=256,
+            render_live=cfg.render_live,
+            task_suite_name=cfg.task_suite_name,
+            task_id=task_id,
+        )
 
         # Start episodes
         task_episodes, task_successes = 0, 0

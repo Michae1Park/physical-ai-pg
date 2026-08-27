@@ -23,29 +23,34 @@ else:
 
 from libero.libero import get_libero_path  # noqa: E402
 from libero.libero.envs import OffScreenRenderEnv  # noqa: E402
-from libero.libero.envs.env_wrapper import ControlEnv  # noqa: E402
 
+from experiments.robot.libero.env_worker import RemoteLiberoEnv  # noqa: E402
 from experiments.robot.robot_utils import (  # noqa: E402
     DATE,
     DATE_TIME,
 )
 
 
-def get_libero_env(task, model_family, resolution=256, render_live=False):
+def get_libero_env(task, model_family, resolution=256, render_live=False, task_suite_name=None, task_id=None):
     """Initializes and returns the LIBERO environment, along with the task description."""
     task_description = task.language
+    if render_live:
+        # The on-screen path needs a loaded CUDA model and a GLX-backed cv2 window to coexist, which
+        # is unstable in-process on this box's driver (segfault during model load, or a silent hang --
+        # see memory: openvla_libero_setup fixes 11/15). So run LIBERO itself in a genuinely separate
+        # OS process (env_worker.py, launched via subprocess.Popen, never imports torch/tf) instead of
+        # building the env here. Requires MUJOCO_GL to be left unset (GLX) and a real $DISPLAY -- the
+        # child process inherits this process's env vars, so that requirement is unchanged from before.
+        assert task_suite_name is not None and task_id is not None, (
+            "task_suite_name and task_id are required when render_live=True, since the env is built "
+            "inside a separate env_worker.py subprocess from (task_suite_name, task_id) rather than "
+            "from the already-resolved `task` object."
+        )
+        return RemoteLiberoEnv(task_suite_name, task_id, resolution=resolution, render_live=True), task_description
+
     task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
     env_args = {"bddl_file_name": task_bddl_file, "camera_heights": resolution, "camera_widths": resolution}
-    if render_live:
-        # robosuite's on-screen viewer (OpenCVRenderer) just cv2.imshow()'s frames pulled from the
-        # *offscreen* render context, so has_offscreen_renderer must stay True even here. That shared
-        # context has to go through the real display's GLX driver, same as the cv2 window -- if
-        # MUJOCO_GL=egl is set (as we do for the fast headless-only path), the offscreen context binds
-        # to the headless EGL device instead and the process segfaults the moment cv2 tries to show a
-        # frame. So: run with MUJOCO_GL unset (or "glx") and a working $DISPLAY when render_live=True.
-        env = ControlEnv(has_renderer=True, render_camera="frontview", **env_args)
-    else:
-        env = OffScreenRenderEnv(**env_args)
+    env = OffScreenRenderEnv(**env_args)
     env.seed(0)  # IMPORTANT: seed seems to affect object positions even when using fixed initial state
     return env, task_description
 

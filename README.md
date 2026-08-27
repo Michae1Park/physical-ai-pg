@@ -2,7 +2,7 @@
 
 Running [OpenVLA](https://github.com/openvla/openvla) against the [LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO) simulation benchmark (MuJoCo, via robosuite) to reproduce the results shown on [openvla.github.io](https://openvla.github.io/).
 
-Rendering runs headlessly via MuJoCo's EGL backend (GPU-accelerated, no display needed) — rollouts are saved as MP4 files rather than shown in an on-screen viewer, which is the practical option on a remote/SSH'd-into GPU box.
+Rendering runs headlessly via MuJoCo's EGL backend (GPU-accelerated, no display needed) by default — rollouts are saved as MP4 files. If you're on the machine's own display (not SSH'd in), `--render_live True` pops up an on-screen window instead — see [Watching it live](#watching-it-live).
 
 `src/openvla` and `src/LIBERO` are vendored directly in this repo (neither is an actively maintained PyPI package, and OpenVLA's LIBERO eval script only exists as source, not as an installable module) — cloning this repo is all you need to get the code. What's left is building the Python environment.
 
@@ -67,3 +67,30 @@ Swap `--task_suite_name` and `--pretrained_checkpoint` to run the other three LI
 
 Bump `--num_trials_per_task` up to 50 to reproduce the paper's full evaluation protocol (500
 episodes per suite — expect several hours per suite on a single GPU).
+
+## Watching it live
+
+If you're logged in on the machine's own display (not SSH'd in — check `echo $DISPLAY` is set,
+e.g. `:1`), `--render_live True` pops up an on-screen window of the rollout instead of only
+saving an MP4 at the end. Same command as Quick Start, just add the flag and drop
+`MUJOCO_GL=egl` (leave `MUJOCO_GL` unset — it must use the display's real GLX driver, not the
+headless EGL backend):
+
+```bash
+conda activate openvla
+cd src/openvla
+
+python experiments/robot/libero/run_libero_eval.py \
+  --model_family openvla \
+  --pretrained_checkpoint openvla/openvla-7b-finetuned-libero-spatial \
+  --task_suite_name libero_spatial \
+  --center_crop True \
+  --num_trials_per_task 1 \
+  --use_wandb False \
+  --render_live True
+```
+
+MP4s are still saved as usual alongside the live view. Under the hood, `--render_live` runs the
+LIBERO/MuJoCo simulation in its own OS subprocess (`experiments/robot/libero/env_worker.py`),
+separate from the process holding the loaded model on the GPU — earlier attempts at rendering
+live in the same process as the loaded model were unstable on this driver (segfault or hang).
